@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TCP/UDP 錯誤檢查碼 (Checksum) 計算與檢驗過程動畫</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700;800&display=swap" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <style>
+    body {
+      font-family: 'Noto Sans TC', sans-serif;
+      background-color: #0f172a;
+      color: #f8fafc;
+    }
+    .font-mono-code {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); }
+      50% { box-shadow: 0 0 20px 4px rgba(59, 130, 246, 0.7); }
+    }
+    @keyframes pulseOrange {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.5); }
+      50% { box-shadow: 0 0 22px 5px rgba(234, 88, 12, 0.8); }
+    }
+    @keyframes slidePacket {
+      0% { left: 10%; opacity: 0; transform: translateY(-50%) scale(0.9); }
+      15% { opacity: 1; transform: translateY(-50%) scale(1); }
+      50% { left: 50%; transform: translateY(-50%) scale(1.08); }
+      85% { opacity: 1; transform: translateY(-50%) scale(1); }
+      100% { left: 90%; opacity: 0; transform: translateY(-50%) scale(0.9); }
+    }
+    .active-card-blue {
+      animation: pulseGlow 1.8s infinite;
+      border-color: #3b82f6 !important;
+      background-color: rgba(30, 58, 138, 0.45) !important;
+    }
+    .active-card-orange {
+      animation: pulseOrange 1.8s infinite;
+      border-color: #ea580c !important;
+      background-color: rgba(154, 52, 18, 0.45) !important;
+    }
+    .packet-flying {
+      animation: slidePacket 2.6s ease-in-out forwards;
+    }
+    .bit-flip {
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between selection:bg-blue-600 selection:text-white">
+
+  <!-- 頂部標題與語音控制列 -->
+  <header class="bg-slate-900/90 border-b border-slate-800 px-4 sm:px-8 py-3.5 sticky top-0 z-30 backdrop-blur">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-lg">
+          <i class="fa-solid fa-shield-halved text-lg"></i>
+        </div>
+        <div>
+          <span class="text-xs font-bold tracking-wider uppercase text-orange-400 block">計算機概論 CH06 · 傳輸層可靠機制</span>
+          <h1 class="text-lg sm:text-xl font-black text-white tracking-tight">錯誤檢查碼 (Checksum) 計算與檢驗動畫</h1>
+        </div>
+      </div>
+
+      <!-- 語音導覽控制組 -->
+      <div class="flex flex-wrap items-center gap-2 sm:gap-3 bg-slate-800/90 px-3 py-2 rounded-xl border border-slate-700">
+        <button id="btnVoiceToggle" onclick="toggleVoice()" class="flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm bg-emerald-600 hover:bg-emerald-500 text-white transition cursor-pointer">
+          <i id="voiceIcon" class="fa-solid fa-volume-high"></i>
+          <span id="voiceLabel">語音導覽：開啟</span>
+        </button>
+        <div class="flex items-center gap-1.5 text-xs text-slate-300">
+          <label for="voiceRate" class="font-medium hidden sm:inline">語速：</label>
+          <select id="voiceRate" onchange="changeRate()" class="bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white font-mono-code focus:outline-none focus:border-blue-500 cursor-pointer">
+            <option value="0.85">0.85x</option>
+            <option value="1.0" selected>1.0x</option>
+            <option value="1.2">1.2x</option>
+          </select>
+        </div>
+        <button onclick="replayCurrentSpeech()" title="重聽本步驟語音" class="px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm transition cursor-pointer">
+          <i class="fa-solid fa-rotate-right"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主教學互動區 -->
+  <main class="max-w-7xl w-full mx-auto px-4 sm:px-8 py-5 flex-grow flex flex-col gap-5">
+
+    <!-- 階段導覽 Tabs -->
+    <div class="grid grid-cols-3 gap-2 sm:gap-4 bg-slate-900 p-2 rounded-2xl border border-slate-800">
+      <button id="tabSender" onclick="jumpToPhase('sender')" class="py-2.5 px-3 rounded-xl font-bold text-sm sm:text-base flex items-center justify-center gap-2 transition cursor-pointer bg-blue-600 text-white shadow-md">
+        <span class="w-6 h-6 rounded-full bg-white/20 text-xs flex items-center justify-center">A</span>
+        <span>發送端計算 Checksum</span>
+      </button>
+      <button id="tabTransmit" onclick="jumpToPhase('transmit')" class="py-2.5 px-3 rounded-xl font-bold text-sm sm:text-base flex items-center justify-center gap-2 transition cursor-pointer text-slate-400 hover:text-white hover:bg-slate-800">
+        <span class="w-6 h-6 rounded-full bg-slate-700 text-xs flex items-center justify-center">B</span>
+        <span>網路傳輸與雜訊模擬</span>
+      </button>
+      <button id="tabReceiver" onclick="jumpToPhase('receiver')" class="py-2.5 px-3 rounded-xl font-bold text-sm sm:text-base flex items-center justify-center gap-2 transition cursor-pointer text-slate-400 hover:text-white hover:bg-slate-800">
+        <span class="w-6 h-6 rounded-full bg-slate-700 text-xs flex items-center justify-center">C</span>
+        <span>接收端驗證 Checksum</span>
+      </button>
+    </div>
+
+    <!-- 上半部：12-Bytes 封包結構視覺化區塊 -->
+    <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+        <div class="flex items-center gap-2.5">
+          <i class="fa-solid fa-cubes text-blue-400 text-lg"></i>
+          <h2 class="text-base sm:text-lg font-bold text-white">12-Bytes 涵蓋範圍結構（分為 6 組 16-bit 十六進位數字）</h2>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button onclick="resetToTextbook()" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer">
+            <i class="fa-solid fa-book-open mr-1 text-blue-400"></i>還原課本預設值
+          </button>
+          <button onclick="randomizeData()" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer">
+            <i class="fa-solid fa-shuffle mr-1 text-purple-400"></i>隨機更換資料
+          </button>
+        </div>
+      </div>
+
+      <!-- 6 個 16-bit 區塊 -->
+      <div id="wordsGrid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <!-- 由 JS 動態渲染 -->
+      </div>
+
+      <!-- 傳輸動畫軌道 (僅在階段 B 或需要時特別突顯) -->
+      <div id="transmissionTrack" class="mt-5 pt-4 border-t border-slate-800/80">
+        <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <!-- 發送端節點 -->
+          <div class="flex items-center gap-3 bg-slate-800/80 px-4 py-2.5 rounded-xl border border-slate-700 w-full sm:w-auto justify-center">
+            <i class="fa-solid fa-laptop-code text-blue-400 text-xl"></i>
+            <div>
+              <div class="text-xs text-slate-400">發送端 (Sender)</div>
+              <div class="text-sm font-bold text-white">計算並填入檢查碼</div>
+            </div>
+          </div>
+
+          <!-- 中央網路通道與雜訊按鈕 -->
+          <div class="flex-grow w-full flex flex-col items-center gap-2">
+            <div class="relative w-full h-10 bg-slate-950 rounded-full border border-slate-800 flex items-center justify-center overflow-hidden px-4">
+              <div class="w-full border-t-2 border-dashed border-slate-700"></div>
+              <div id="flyingPacket" class="hidden absolute top-1/2 -translate-y-1/2 bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg flex items-center gap-1.5 whitespace-nowrap">
+                <i class="fa-solid fa-envelope"></i>
+                <span id="flyingPacketText">12-Bytes 封包傳輸中</span>
+              </div>
+              <span id="channelStatusBadge" class="relative z-10 bg-slate-900 px-3 py-0.5 rounded-full text-xs font-bold text-emerald-400 border border-emerald-500/30">
+                <i class="fa-solid fa-check-circle mr-1"></i>通道狀態：正常無干擾
+              </span>
+            </div>
+            <div class="flex flex-wrap items-center justify-center gap-2">
+              <button onclick="setNoise(false)" id="btnNoNoise" class="text-xs px-3 py-1 rounded-lg font-bold bg-emerald-600/20 text-emerald-300 border border-emerald-500/50 hover:bg-emerald-600/30 transition cursor-pointer">
+                <i class="fa-solid fa-wifi mr-1"></i>正常無誤傳輸
+              </button>
+              <button onclick="setNoise(true)" id="btnWithNoise" class="text-xs px-3 py-1 rounded-lg font-bold bg-rose-600/20 text-rose-300 border border-rose-500/50 hover:bg-rose-600/30 transition cursor-pointer">
+                <i class="fa-solid fa-bolt mr-1"></i>模擬雜訊破壞 (Byte 5-6 翻轉 1 bit)
+              </button>
+            </div>
+          </div>
+
+          <!-- 接收端節點 -->
+          <div class="flex items-center gap-3 bg-slate-800/80 px-4 py-2.5 rounded-xl border border-slate-700 w-full sm:w-auto justify-center">
+            <i class="fa-solid fa-server text-indigo-400 text-xl"></i>
+            <div>
+              <div class="text-xs text-slate-400">接收端 (Receiver)</div>
+              <div class="text-sm font-bold text-white">全數相加驗證 0xFFFF</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 下半部：左右雙欄（左側：十六進位與二進位運算動畫區；右側：步驟明細與同步字幕） -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-grow">
+
+      <!-- 左側 7 欄：運算視覺化舞台 -->
+      <section class="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 sm:p-6 flex flex-col justify-between shadow-xl">
+        <div>
+          <div class="flex items-center justify-between mb-4">
+            <span id="stageBadge" class="px-3 py-1 rounded-full text-xs font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">
+              步驟 1 / 9
+            </span>
+            <span id="mathModeLabel" class="text-xs font-mono-code text-slate-400">16-bit One's Complement Arithmetic</span>
+          </div>
+          <h3 id="stepTitle" class="text-xl sm:text-2xl font-black text-white mb-4">
+            準備開始：發送端將 Checksum 欄位歸零佔位
+          </h3>
+        </div>
+
+        <!-- 動態算式與二進位視覺容器 -->
+        <div id="visualStage" class="my-auto bg-slate-950/90 border border-slate-800 rounded-xl p-4 sm:p-6 min-h-[230px] flex flex-col justify-center">
+          <!-- 由 JS 動態生成對應步驟的高清視覺圖解 -->
+        </div>
+
+        <!-- 底部進度條 -->
+        <div class="mt-5">
+          <div class="flex justify-between text-xs text-slate-400 mb-1.5">
+            <span>教學進度</span>
+            <span id="progressText">1 / 9</span>
+          </div>
+          <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+            <div id="progressBar" class="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-orange-500 transition-all duration-300" style="width: 11%"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 右側 5 欄：語音同步字幕卡片與播放控制列 -->
+      <section class="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 sm:p-6 flex flex-col justify-between shadow-xl">
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2 text-orange-400 font-bold text-sm">
+              <i class="fa-solid fa-comment-dots"></i>
+              <span>課堂語音解說字幕</span>
+            </div>
+            <span id="speakingIndicator" class="hidden items-center gap-1.5 text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/30">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              朗讀中
+            </span>
+          </div>
+
+          <!-- 字幕顯示區 -->
+          <div class="bg-slate-800/70 border border-slate-700/80 rounded-xl p-4 sm:p-5 min-h-[160px] flex items-center">
+            <p id="subtitleText" class="text-base sm:text-lg leading-relaxed text-slate-100 font-medium">
+              歡迎來到錯誤檢查碼教學動畫！發送端在計算 Checksum 之前，必須先把第 3 到第 4 個 Byte 的檢查碼欄位填入 0x0000 作為佔位，避免舊資料干擾計算。
+            </p>
+          </div>
+
+          <!-- 重點提示小卡 -->
+          <div id="keyTipBox" class="mt-3 bg-blue-950/40 border border-blue-800/50 rounded-xl p-3.5 text-xs sm:text-sm text-blue-200 flex items-start gap-2.5">
+            <i class="fa-solid fa-lightbulb text-amber-400 mt-0.5 text-base"></i>
+            <span id="keyTipText">小提醒：因為 Checksum 欄位本身就嵌在被檢查的 12 Bytes 裡面，所以計算前必須先歸零！</span>
+          </div>
+        </div>
+
+        <!-- 播放控制按鈕列 -->
+        <div class="mt-5 pt-4 border-t border-slate-800 flex flex-col gap-2.5">
+          <div class="grid grid-cols-3 gap-2">
+            <button id="btnPrev" onclick="prevStep()" class="py-3 px-3 rounded-xl font-bold text-sm bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white border border-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer">
+              <i class="fa-solid fa-backward-step"></i>
+              <span>上一步</span>
+            </button>
+            <button id="btnAutoPlay" onclick="toggleAutoPlay()" class="py-3 px-3 rounded-xl font-bold text-sm bg-orange-600 hover:bg-orange-500 text-white shadow-lg transition flex items-center justify-center gap-1.5 cursor-pointer">
+              <i id="autoPlayIcon" class="fa-solid fa-play"></i>
+              <span id="autoPlayText">自動播放</span>
+            </button>
+            <button id="btnNext" onclick="nextStep()" class="py-3 px-3 rounded-xl font-bold text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white shadow-lg transition flex items-center justify-center gap-1.5 cursor-pointer">
+              <span>下一步</span>
+              <i class="fa-solid fa-forward-step"></i>
+            </button>
+          </div>
+          <button onclick="restartAll()" class="w-full py-2 rounded-xl font-bold text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer">
+            <i class="fa-solid fa-arrow-rotate-left mr-1"></i>從第 1 步重新開始演示
+          </button>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <script>
+    // ==========================================
+    // 1. 狀態與課本預設資料定義
+    // ==========================================
+    // 課本 6 組 16-bit 數字（索引 1 為 Checksum 欄位）
+    const TEXTBOOK_WORDS = [0x1234, 0x0000, 0x5678, 0x9ABC, 0xDEFF, 0xFFFF];
+    const WORD_LABELS = [
+      "Byte 1–2 (標頭欄位)",
+      "Byte 3–4 (Checksum 欄位)",
+      "Byte 5–6 (資料區塊 1)",
+      "Byte 7–8 (資料區塊 2)",
+      "Byte 9–10 (資料區塊 3)",
+      "Byte 11–12 (資料區塊 4)"
+    ];
+
+    let baseWords = [...TEXTBOOK_WORDS]; // 原始資料（Checksum 位置為 0）
+    let hasNoise = false;                // 是否模擬雜訊翻轉 1 bit
+    let currentStepIndex = 0;            // 0 ~ 8 共 9 個教學步驟
+    let isAutoPlaying = false;
+    let autoPlayTimer = null;
+    let voiceEnabled = true;
+    let speechRate = 1.0;
+
+    // 格式化工具
+    function toHex4(num) {
+      return "0x" + (num & 0xFFFF).toString(16).toUpperCase().padStart(4, "0");
+    }
+    function toHexRaw(num) {
+      return num.toString(16).toUpperCase();
+    }
+    function toBin16(num) {
+      return (num & 0xFFFF).toString(2).padStart(16, "0").replace(/(.{4})/g, "$1 ").trim();
+    }
+
+    // 動態計算發送端與接收端的所有數學中間值
+    function computeMathState() {
+      // 發送端計算（Byte 3-4 為 0x0000）
+      const w0 = baseWords[0];
+      const w1 = 0x0000;
+      const w2 = baseWords[2];
+      const w3 = baseWords[3];
+      const w4 = baseWords[4];
+      const w5 = baseWords[5];
+
+      const sumStep1 = w0 + w2;               // 0x1234 + 0x5678 = 0x68AC
+      const sumStep2 = sumStep1 + w3;         // + 0x9ABC = 0x10368
+      const sumStep3 = sumStep2 + w4;         // + 0xDEFF = 0x1E267
+      const rawSenderSum = sumStep3 + w5;     // + 0xFFFF = 0x2E266
+
+      const senderCarry = rawSenderSum >>> 16;          // 0x0002
+      const senderLow16 = rawSenderSum & 0xFFFF;        // 0xE266
+      // 處理可能二次溢位（極端情況保護）
+      let foldedSender = senderLow16 + senderCarry;
+      if (foldedSender > 0xFFFF) {
+        foldedSender = (foldedSender & 0xFFFF) + (foldedSender >>> 16);
+      }
+
+      const checksum = (~foldedSender) & 0xFFFF;        // 0xFFFF - 0xE268 = 0x1D97
+
+      // 接收端收到的 6 組數字（若開啟雜訊，則 w2 的最低位元翻轉 1 bit，例如 0x5678 -> 0x5679）
+      const rxW2 = hasNoise ? (w2 ^ 0x0001) : w2;
+      const rxWords = [w0, checksum, rxW2, w3, w4, w5];
+
+      const rawReceiverSum = rxWords.reduce((acc, val) => acc + val, 0); // 正常為 0x2FFFD
+      const rxCarry = rawReceiverSum >>> 16;            // 0x0002
+      const rxLow16 = rawReceiverSum & 0xFFFF;          // 0xFFFD
+      let foldedReceiver = rxLow16 + rxCarry;
+      if (foldedReceiver > 0xFFFF) {
+        foldedReceiver = (foldedReceiver & 0xFFFF) + (foldedReceiver >>> 16);
+      }
+      const rxComplement = (~foldedReceiver) & 0xFFFF;  // 正常為 0x0000
+      const isValid = (foldedReceiver === 0xFFFF);
+
+      return {
+        w0, w1, w2, w3, w4, w5,
+        sumStep1, sumStep2, sumStep3, rawSenderSum,
+        senderCarry, senderLow16, foldedSender, checksum,
+        rxW2, rxWords, rawReceiverSum, rxCarry, rxLow16, foldedReceiver, rxComplement, isValid
+      };
+    }
+
+    // ==========================================
+    // 2. 定義 9 個完整教學步驟與語音講稿
+    // ==========================================
+    function getStepsData() {
+      const m = computeMathState();
+      return [
+        // --- 階段 A：發送端計算 (Steps 0 ~ 4) ---
+        {
+          phase: "sender",
+          title: "步驟 1：將 Checksum 欄位先填入 0x0000 佔位",
+          highlightIndices: [1],
+          highlightStyle: "orange",
+          tip: "因為 Checksum 欄位本身就在這 12 Bytes 裡面，計算前必須先歸零，否則會把舊數值也算進去。",
+          speech: `發送端準備計算錯誤檢查碼。這 12 個位元組一共分成 6 組 16 位元的十六進位數字。第一步，我們先把第 3 到第 4 個位元組的 Checksum 欄位填入 0x0000 作為佔位。`,
+          renderVisual: () => `
+            <div class="text-center space-y-4">
+              <div class="inline-flex items-center gap-3 px-5 py-3 rounded-xl bg-orange-500/15 border border-orange-500/40 text-orange-300 font-mono-code text-lg sm:text-xl font-bold">
+                <span>Byte 3–4 (Checksum 欄位)</span>
+                <i class="fa-solid fa-arrow-right"></i>
+                <span class="text-2xl text-white bg-orange-600 px-3 py-1 rounded-lg">0x0000</span>
+              </div>
+              <p class="text-slate-300 text-sm sm:text-base max-w-xl mx-auto">
+                其餘 5 組資料維持原值：<span class="font-mono-code text-blue-300">${toHex4(m.w0)}</span>、<span class="font-mono-code text-blue-300">${toHex4(m.w2)}</span>、<span class="font-mono-code text-blue-300">${toHex4(m.w3)}</span>、<span class="font-mono-code text-blue-300">${toHex4(m.w4)}</span>、<span class="font-mono-code text-blue-300">${toHex4(m.w5)}</span>。
+              </p>
+            </div>
+          `
+        },
+        {
+          phase: "sender",
+          title: "步驟 2：將 6 組 16-bit 數字執行十六進位累加",
+          highlightIndices: [0, 1, 2, 3, 4, 5],
+          highlightStyle: "blue",
+          tip: "十六進位滿 16 進 1（F 是 15，再加 1 就進位）。全部加完後總和超過 4 位數，多出來的就是溢位！",
+          speech: `第二步，把這 6 組十六進位數字全部加在一起。從 ${toHex4(m.w0)} 開始，依序加上 ${toHex4(m.w2)}、${toHex4(m.w3)}、${toHex4(m.w4)} 與 ${toHex4(m.w5)}，我們得到的總和是 0x${toHexRaw(m.rawSenderSum)}。`,
+          renderVisual: () => `
+            <div class="font-mono-code text-sm sm:text-base space-y-2 max-w-lg mx-auto">
+              <div class="flex justify-between items-center text-slate-300 bg-slate-900 px-3 py-1.5 rounded-lg">
+                <span>${toHex4(m.w0)} + 0x0000 + ${toHex4(m.w2)}</span>
+                <span class="text-blue-400 font-bold">= 0x${toHexRaw(m.sumStep1)}</span>
+              </div>
+              <div class="flex justify-between items-center text-slate-300 bg-slate-900 px-3 py-1.5 rounded-lg">
+                <span>0x${toHexRaw(m.sumStep1)} + ${toHex4(m.w3)}</span>
+                <span class="text-blue-400 font-bold">= 0x${toHexRaw(m.sumStep2)}</span>
+              </div>
+              <div class="flex justify-between items-center text-slate-300 bg-slate-900 px-3 py-1.5 rounded-lg">
+                <span>0x${toHexRaw(m.sumStep2)} + ${toHex4(m.w4)}</span>
+                <span class="text-blue-400 font-bold">= 0x${toHexRaw(m.sumStep3)}</span>
+              </div>
+              <div class="flex justify-between items-center text-white bg-blue-950/70 border border-blue-500/50 px-3 py-2 rounded-lg text-base sm:text-lg font-extrabold">
+                <span>0x${toHexRaw(m.sumStep3)} + ${toHex4(m.w5)}</span>
+                <span class="text-amber-400">= 0x${toHexRaw(m.rawSenderSum)}</span>
+              </div>
+            </div>
+          `
+        },
+        {
+          phase: "sender",
+          title: "步驟 3：溢位回捲相加（End-around Carry）",
+          highlightIndices: [],
+          highlightStyle: "blue",
+          tip: "16-bit 欄位只能裝 4 位十六進位數字，最左邊多出來的進位不能直接丟掉，必須折回最右邊相加！",
+          speech: `第三步，處理溢位回捲。剛才加總得到 0x${toHexRaw(m.rawSenderSum)}，最左邊多出了一個進位 ${toHex4(m.senderCarry)}。我們把這個進位折回右邊，與低 16 位的 ${toHex4(m.senderLow16)} 相加，得到 ${toHex4(m.foldedSender)}。`,
+          renderVisual: () => `
+            <div class="flex flex-col items-center justify-center space-y-4 font-mono-code">
+              <div class="flex items-center gap-2 text-2xl sm:text-3xl font-black">
+                <span class="px-3 py-1.5 rounded-lg bg-amber-500/20 border-2 border-amber-400 text-amber-300">0x${m.senderCarry.toString(16).toUpperCase()}</span>
+                <span class="text-slate-500">+</span>
+                <span class="px-3 py-1.5 rounded-lg bg-blue-500/20 border-2 border-blue-400 text-blue-300">${toHex4(m.senderLow16)}</span>
+              </div>
+              <div class="text-xs sm:text-sm text-amber-300 flex items-center gap-2">
+                <i class="fa-solid fa-turn-down"></i>
+                <span>超出的進位 ${toHex4(m.senderCarry)} 折回個位數相加</span>
+              </div>
+              <div class="px-6 py-3 rounded-xl bg-slate-900 border-2 border-emerald-500/60 text-2xl sm:text-3xl font-black text-emerald-400">
+                結果 = ${toHex4(m.foldedSender)}
+              </div>
+            </div>
+          `
+        },
+        {
+          phase: "sender",
+          title: "步驟 4：取「一補數（One's Complement）」位元反轉",
+          highlightIndices: [],
+          highlightStyle: "orange",
+          tip: "一補數就是二進位的 0 變 1、1 變 0；用十六進位算法，就是直接拿 0xFFFF 去減掉剛才的總和！",
+          speech: `第四步，取一補數。把 ${toHex4(m.foldedSender)} 轉成二進位後，將所有的 0 變成 1、1 變成 0，這在十六進位裡等同於用 0xFFFF 減去 ${toHex4(m.foldedSender)}，算出來就是 ${toHex4(m.checksum)}！`,
+          renderVisual: () => `
+            <div class="space-y-3 font-mono-code max-w-xl mx-auto">
+              <div class="bg-slate-900 p-3 rounded-xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <span class="text-xs text-slate-400">回捲總和 (${toHex4(m.foldedSender)})：</span>
+                <span class="text-sm sm:text-base text-blue-300 tracking-wider">${toBin16(m.foldedSender)}</span>
+              </div>
+              <div class="text-center text-orange-400 text-xs font-bold">
+                <i class="fa-solid fa-arrows-up-down mr-1"></i>二進位 0 ↔ 1 全部反轉（或 0xFFFF − ${toHex4(m.foldedSender)}）
+              </div>
+              <div class="bg-orange-950/40 p-3 rounded-xl border border-orange-500/50 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <span class="text-xs text-orange-300 font-bold">檢查碼 (${toHex4(m.checksum)})：</span>
+                <span class="text-sm sm:text-base text-orange-300 font-bold tracking-wider">${toBin16(m.checksum)}</span>
+              </div>
+            </div>
+          `
+        },
+        {
+          phase: "sender",
+          title: "步驟 5：將算出的 Checksum 填入 Byte 3–4 欄位",
+          highlightIndices: [1],
+          highlightStyle: "orange",
+          tip: "發送端大功告成！原本佔位的 0x0000 已經換成真正的錯誤檢查碼，準備送出封包。",
+          speech: `第五步，發送端把算出的檢查碼 ${toHex4(m.checksum)}，正式寫入第 3 到第 4 個位元組的 Checksum 欄位，取代原本的 0x0000。封包組裝完成，準備送出！`,
+          renderVisual: () => `
+            <div class="text-center space-y-4">
+              <div class="inline-flex flex-wrap items-center justify-center gap-3 px-5 py-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 font-mono-code">
+                <span class="text-slate-400 line-through text-lg">0x0000</span>
+                <i class="fa-solid fa-arrow-right text-emerald-400"></i>
+                <span class="text-2xl sm:text-3xl font-black text-white bg-emerald-600 px-4 py-1.5 rounded-lg shadow-lg">${toHex4(m.checksum)}</span>
+              </div>
+              <p class="text-slate-300 text-sm sm:text-base">
+                此時 6 組數據相加（含回捲）已鎖定為 <span class="font-mono-code text-emerald-400 font-bold">0xFFFF</span> 的黃金平衡狀態。
+              </p>
+            </div>
+          `
+        },
+
+        // --- 階段 B：網路傳輸模擬 (Step 5) ---
+        {
+          phase: "transmit",
+          title: "步驟 6：封包穿越網際網路（可切換正常或雜訊干擾）",
+          highlightIndices: hasNoise ? [2] : [],
+          highlightStyle: "orange",
+          tip: "老師可點擊上方「模擬雜訊破壞」按鈕，讓 Byte 5–6 的數值發生 1 個 bit 翻轉，觀察接收端如何抓出錯誤！",
+          speech: hasNoise
+            ? `封包正在網路中傳送，糟糕！半路上遇到電磁雜訊干擾，導致第 5 到第 6 個位元組從 ${toHex4(m.w2)} 變成了 ${toHex4(m.rxW2)}，有一個位元被翻轉了！`
+            : `封包正式透過網路傳送給接收端。目前通道狀態良好，所有 12 個位元組都完整無誤地抵達目的地。`,
+          renderVisual: () => `
+            <div class="text-center space-y-4">
+              ${hasNoise ? `
+                <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-rose-500/20 border border-rose-500 text-rose-300 font-bold text-sm">
+                  <i class="fa-solid fa-triangle-exclamation"></i>
+                  <span>警告：傳輸過程中發生 1-bit 雜訊翻轉！</span>
+                </div>
+                <div class="font-mono-code text-xl sm:text-2xl font-black flex items-center justify-center gap-3">
+                  <span class="text-slate-400">${toHex4(m.w2)}</span>
+                  <i class="fa-solid fa-bolt text-rose-500"></i>
+                  <span class="text-rose-400 bg-rose-950 px-3 py-1 rounded-lg border border-rose-500">${toHex4(m.rxW2)}</span>
+                </div>
+              ` : `
+                <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/20 border border-emerald-500 text-emerald-300 font-bold text-sm">
+                  <i class="fa-solid fa-circle-check"></i>
+                  <span>封包順利穿越路由器與光纖，資料零誤差抵達</span>
+                </div>
+                <div class="text-slate-300 text-sm sm:text-base">
+                  接收端收到了完整的 6 組數據，接下來準備進行檢驗！
+                </div>
+              `}
+            </div>
+          `
+        },
+
+        // --- 階段 C：接收端檢驗 (Steps 6 ~ 8) ---
+        {
+          phase: "receiver",
+          title: "步驟 7：接收端將收到的 6 組數字（含 Checksum）全部相加",
+          highlightIndices: [0, 1, 2, 3, 4, 5],
+          highlightStyle: "blue",
+          tip: "注意！接收端「不需要」把 Checksum 欄位歸零，而是直接把收到的檢查碼一起加進來！",
+          speech: `接收端收到封包後開始檢驗。接收端不需要把 Checksum 歸零，而是直接把收到的全部 6 組十六進位數字，包含檢查碼 ${toHex4(m.checksum)} 在內，通通加在一起，得到總和 0x${toHexRaw(m.rawReceiverSum)}。`,
+          renderVisual: () => `
+            <div class="font-mono-code text-sm sm:text-base space-y-2.5 max-w-xl mx-auto">
+              <div class="bg-slate-900 p-3 rounded-xl border border-slate-800 text-slate-200 leading-relaxed">
+                ${toHex4(m.w0)} + <span class="text-orange-400 font-bold">${toHex4(m.checksum)}</span> + <span class="${hasNoise ? 'text-rose-400 font-bold underline' : ''}">${toHex4(m.rxW2)}</span> + ${toHex4(m.w3)} + ${toHex4(m.w4)} + ${toHex4(m.w5)}
+              </div>
+              <div class="flex items-center justify-between bg-blue-950/60 border border-blue-500/40 px-4 py-2.5 rounded-xl">
+                <span class="text-slate-300 text-sm">接收端直接累加總和：</span>
+                <span class="text-xl sm:text-2xl font-black text-amber-400">0x${toHexRaw(m.rawReceiverSum)}</span>
+              </div>
+            </div>
+          `
+        },
+        {
+          phase: "receiver",
+          title: "步驟 8：接收端執行溢位回捲相加",
+          highlightIndices: [],
+          highlightStyle: "blue",
+          tip: "和發送端一樣，把超過 16 位元的進位折回右邊相加，看看最後結果是不是 0xFFFF！",
+          speech: `接著，接收端同樣執行溢位回捲相加，把進位 ${toHex4(m.rxCarry)} 折回低 16 位的 ${toHex4(m.rxLow16)} 相加，最後得到的驗證結果是 ${toHex4(m.foldedReceiver)}。`,
+          renderVisual: () => `
+            <div class="flex flex-col items-center justify-center space-y-4 font-mono-code">
+              <div class="flex items-center gap-2 text-2xl sm:text-3xl font-black">
+                <span class="px-3 py-1.5 rounded-lg bg-amber-500/20 border-2 border-amber-400 text-amber-300">0x${m.rxCarry.toString(16).toUpperCase()}</span>
+                <span class="text-slate-500">+</span>
+                <span class="px-3 py-1.5 rounded-lg bg-blue-500/20 border-2 border-blue-400 text-blue-300">${toHex4(m.rxLow16)}</span>
+              </div>
+              <div class="px-6 py-3 rounded-xl bg-slate-900 border-2 ${m.isValid ? 'border-emerald-500 text-emerald-400' : 'border-rose-500 text-rose-400'} text-2xl sm:text-3xl font-black">
+                驗證總和 = ${toHex4(m.foldedReceiver)}
+              </div>
+            </div>
+          `
+        },
+        {
+          phase: "receiver",
+          title: m.isValid ? "步驟 9：最終判定 —— 結果為 0xFFFF，驗證通過！" : "步驟 9：最終判定 —— 結果非 0xFFFF，封包毀損丟棄！",
+          highlightIndices: [],
+          highlightStyle: m.isValid ? "blue" : "orange",
+          tip: m.isValid
+            ? "0xFFFF 的二進位是 16 個 1，取反相後全為 0x0000，代表原始資料加上檢查碼完美互補！"
+            : "只要傳輸中有任何位元錯亂，總和就不會是 0xFFFF，傳輸層會直接丟棄此封包（TCP 則會觸發重傳）。",
+          speech: m.isValid
+            ? `最後一步，接收端檢查總和。結果剛好等於 0xFFFF，取一補數反相後全部為 0！這證明資料在傳輸過程中完全沒有出錯，驗證通過，系統放心將資料交給上層應用程式！`
+            : `最後一步，接收端檢查總和。結果是 ${toHex4(m.foldedReceiver)}，並不等於 0xFFFF！這代表封包在傳輸過程中已經毀損，接收端會立刻將這個錯誤封包丟棄！`,
+          renderVisual: () => m.isValid ? `
+            <div class="text-center space-y-3 py-2">
+              <div class="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-400 text-emerald-400 flex items-center justify-center text-3xl mx-auto shadow-lg shadow-emerald-500/20">
+                <i class="fa-solid fa-check"></i>
+              </div>
+              <h4 class="text-2xl font-black text-emerald-400">驗證通過！資料無誤 (0xFFFF)</h4>
+              <p class="text-slate-300 text-sm font-mono-code">二進位：1111 1111 1111 1111（取反相後 = 0x0000）</p>
+            </div>
+          ` : `
+            <div class="text-center space-y-3 py-2">
+              <div class="w-16 h-16 rounded-full bg-rose-500/20 border-2 border-rose-400 text-rose-400 flex items-center justify-center text-3xl mx-auto shadow-lg shadow-rose-500/20">
+                <i class="fa-solid fa-xmark"></i>
+              </div>
+              <h4 class="text-2xl font-black text-rose-400">驗證失敗！偵測到資料毀損</h4>
+              <p class="text-slate-300 text-sm font-mono-code">實算總和 ${toHex4(m.foldedReceiver)} ≠ 預期 0xFFFF → 丟棄封包！</p>
+            </div>
+          `
+        }
+      ];
+    }
+
+    // ==========================================
+    // 3. 畫面渲染核心函式
+    // ==========================================
+    function renderAll() {
+      const steps = getStepsData();
+      const step = steps[currentStepIndex];
+      const m = computeMathState();
+
+      // 決定目前顯示在上方 6 格的數值
+      // Step 0~3: Checksum 欄位顯示 0x0000
+      // Step 4: Checksum 欄位顯示算出的 0x1D97
+      // Step 5~8: 顯示接收端狀態（若開啟雜訊，w2 顯示破壞後的數值）
+      let displayWords = [...baseWords];
+      if (currentStepIndex >= 4) {
+        displayWords[1] = m.checksum;
+      }
+      if (currentStepIndex >= 5 && hasNoise) {
+        displayWords[2] = m.rxW2;
+      }
+
+      // 渲染 6 個 16-bit 方塊
+      const gridEl = document.getElementById("wordsGrid");
+      gridEl.innerHTML = displayWords.map((val, idx) => {
+        const isChecksumSlot = (idx === 1);
+        const isCorruptedSlot = (currentStepIndex >= 5 && hasNoise && idx === 2);
+        const isHighlighted = step.highlightIndices.includes(idx);
+
+        let cardBorder = "border-slate-700 bg-slate-800/70";
+        let badgeColor = "text-slate-400";
+        if (isCorruptedSlot) {
+          cardBorder = "border-rose-500 bg-rose-950/60";
+          badgeColor = "text-rose-300 font-bold";
+        } else if (isChecksumSlot) {
+          cardBorder = "border-orange-500/60 bg-orange-950/30";
+          badgeColor = "text-orange-300 font-bold";
+        }
+
+        const activeAnim = isHighlighted
+          ? (step.highlightStyle === "orange" ? "active-card-orange" : "active-card-blue")
+          : "";
+
+        return `
+          <div class="rounded-xl border-2 p-3 transition-all duration-300 ${cardBorder} ${activeAnim}">
+            <div class="flex items-center justify-between text-[11px] ${badgeColor} mb-1">
+              <span>${WORD_LABELS[idx]}</span>
+              ${isCorruptedSlot ? '<i class="fa-solid fa-bolt text-rose-400"></i>' : ''}
+            </div>
+            <div class="font-mono-code text-xl sm:text-2xl font-black text-white tracking-wide">
+              ${toHex4(val)}
+            </div>
+            <div class="font-mono-code text-[10px] text-slate-400 mt-1 truncate">
+              ${toBin16(val)}
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      // 更新階段 Tabs 樣式
+      const phases = ["sender", "transmit", "receiver"];
+      const tabIds = { sender: "tabSender", transmit: "tabTransmit", receiver: "tabReceiver" };
+      phases.forEach(p => {
+        const el = document.getElementById(tabIds[p]);
+        if (p === step.phase) {
+          el.className = "py-2.5 px-3 rounded-xl font-bold text-sm sm:text-base flex items-center justify-center gap-2 transition cursor-pointer bg-blue-600 text-white shadow-md";
+        } else {
+          el.className = "py-2.5 px-3 rounded-xl font-bold text-sm sm:text-base flex items-center justify-center gap-2 transition cursor-pointer text-slate-400 hover:text-white hover:bg-slate-800";
+        }
+      });
+
+      // 觸發傳輸飛行動畫（進入步驟 6 時）
+      const flyingEl = document.getElementById("flyingPacket");
+      if (currentStepIndex === 5) {
+        flyingEl.classList.remove("hidden", "packet-flying");
+        void flyingEl.offsetWidth; // 強制 reflow 重新觸發動畫
+        flyingEl.classList.add("packet-flying");
+        document.getElementById("flyingPacketText").textContent = hasNoise ? "封包傳輸中（遭雜訊干擾！）" : "12-Bytes 封包正常傳輸中";
+        flyingEl.className = `absolute top-1/2 -translate-y-1/2 ${hasNoise ? 'bg-rose-600' : 'bg-blue-600'} text-white text-xs font-bold px-3 py-1 rounded-full shadow-lg flex items-center gap-1.5 whitespace-nowrap packet-flying`;
+      } else {
+        flyingEl.classList.add("hidden");
+      }
+
+      // 更新運算舞台與字幕
+      document.getElementById("stageBadge").textContent = `步驟 ${currentStepIndex + 1} / ${steps.length}`;
+      document.getElementById("progressText").textContent = `${currentStepIndex + 1} / ${steps.length}`;
+      document.getElementById("progressBar").style.width = `${((currentStepIndex + 1) / steps.length) * 100}%`;
+      document.getElementById("stepTitle").textContent = step.title;
+      document.getElementById("visualStage").innerHTML = step.renderVisual();
+      document.getElementById("subtitleText").textContent = step.speech;
+      document.getElementById("keyTipText").textContent = step.tip;
+
+      // 更新上/下一步按鈕可用狀態
+      document.getElementById("btnPrev").disabled = (currentStepIndex === 0);
+      document.getElementById("btnNext").disabled = (currentStepIndex === steps.length - 1);
+    }
+
+    // ==========================================
+    // 4. Web Speech API 繁體中文語音導覽系統
+    // ==========================================
+    function speakText(text, onEndCallback) {
+      if (!("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel();
+
+      const indicator = document.getElementById("speakingIndicator");
+      if (!voiceEnabled) {
+        indicator.classList.add("hidden");
+        indicator.classList.remove("inline-flex");
+        if (onEndCallback) {
+          autoPlayTimer = setTimeout(onEndCallback, 3800);
+        }
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "zh-TW";
+      utterance.rate = speechRate;
+
+      // 優先挑選台灣繁體中文語音
+      const voices = window.speechSynthesis.getVoices();
+      const twVoice = voices.find(v => v.lang.includes("zh-TW")) || voices.find(v => v.lang.includes("zh"));
+      if (twVoice) utterance.voice = twVoice;
+
+      utterance.onstart = () => {
+        indicator.classList.remove("hidden");
+        indicator.classList.add("inline-flex");
+      };
+      utterance.onend = () => {
+        indicator.classList.add("hidden");
+        indicator.classList.remove("inline-flex");
+        if (onEndCallback && isAutoPlaying) {
+          autoPlayTimer = setTimeout(onEndCallback, 900);
+        }
+      };
+      utterance.onerror = () => {
+        indicator.classList.add("hidden");
+        indicator.classList.remove("inline-flex");
+      };
+
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function playStepWithSpeech() {
+      clearTimeout(autoPlayTimer);
+      renderAll();
+      const steps = getStepsData();
+      const currentSpeech = steps[currentStepIndex].speech;
+
+      speakText(currentSpeech, () => {
+        if (isAutoPlaying && currentStepIndex < steps.length - 1) {
+          currentStepIndex++;
+          playStepWithSpeech();
+        } else if (currentStepIndex >= steps.length - 1) {
+          stopAutoPlay();
+        }
+      });
+    }
+
+    // ==========================================
+    // 5. 使用者互動控制事件
+    // ==========================================
+    function nextStep() {
+      const steps = getStepsData();
+      if (currentStepIndex < steps.length - 1) {
+        currentStepIndex++;
+        playStepWithSpeech();
+      }
+    }
+
+    function prevStep() {
+      if (currentStepIndex > 0) {
+        currentStepIndex--;
+        playStepWithSpeech();
+      }
+    }
+
+    function jumpToPhase(phase) {
+      stopAutoPlay();
+      if (phase === "sender") currentStepIndex = 0;
+      if (phase === "transmit") currentStepIndex = 5;
+      if (phase === "receiver") currentStepIndex = 6;
+      playStepWithSpeech();
+    }
+
+    function restartAll() {
+      stopAutoPlay();
+      currentStepIndex = 0;
+      playStepWithSpeech();
+    }
+
+    function toggleAutoPlay() {
+      if (isAutoPlaying) {
+        stopAutoPlay();
+      } else {
+        isAutoPlaying = true;
+        document.getElementById("autoPlayIcon").className = "fa-solid fa-pause";
+        document.getElementById("autoPlayText").textContent = "暫停播放";
+        document.getElementById("btnAutoPlay").classList.replace("bg-orange-600", "bg-amber-600");
+        if (currentStepIndex >= getStepsData().length - 1) {
+          currentStepIndex = 0;
+        }
+        playStepWithSpeech();
+      }
+    }
+
+    function stopAutoPlay() {
+      isAutoPlaying = false;
+      clearTimeout(autoPlayTimer);
+      document.getElementById("autoPlayIcon").className = "fa-solid fa-play";
+      document.getElementById("autoPlayText").textContent = "自動播放";
+      document.getElementById("btnAutoPlay").classList.replace("bg-amber-600", "bg-orange-600");
+    }
+
+    function toggleVoice() {
+      voiceEnabled = !voiceEnabled;
+      const btn = document.getElementById("btnVoiceToggle");
+      const icon = document.getElementById("voiceIcon");
+      const label = document.getElementById("voiceLabel");
+
+      if (voiceEnabled) {
+        btn.className = "flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm bg-emerald-600 hover:bg-emerald-500 text-white transition cursor-pointer";
+        icon.className = "fa-solid fa-volume-high";
+        label.textContent = "語音導覽：開啟";
+        replayCurrentSpeech();
+      } else {
+        window.speechSynthesis.cancel();
+        btn.className = "flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 transition cursor-pointer";
+        icon.className = "fa-solid fa-volume-xmark";
+        label.textContent = "語音導覽：靜音";
+      }
+    }
+
+    function changeRate() {
+      speechRate = parseFloat(document.getElementById("voiceRate").value);
+      if (voiceEnabled) replayCurrentSpeech();
+    }
+
+    function replayCurrentSpeech() {
+      const steps = getStepsData();
+      speakText(steps[currentStepIndex].speech, null);
+    }
+
+    function setNoise(enableNoise) {
+      hasNoise = enableNoise;
+      const badge = document.getElementById("channelStatusBadge");
+      if (hasNoise) {
+        badge.className = "relative z-10 bg-rose-950 px-3 py-0.5 rounded-full text-xs font-bold text-rose-300 border border-rose-500/60";
+        badge.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1"></i>通道狀態：已加入 1-bit 雜訊破壞';
+      } else {
+        badge.className = "relative z-10 bg-slate-900 px-3 py-0.5 rounded-full text-xs font-bold text-emerald-400 border border-emerald-500/30";
+        badge.innerHTML = '<i class="fa-solid fa-check-circle mr-1"></i>通道狀態：正常無干擾';
+      }
+      // 若目前正好在傳輸或接收階段，立即更新畫面與語音回饋
+      if (currentStepIndex >= 5) {
+        playStepWithSpeech();
+      } else {
+        renderAll();
+      }
+    }
+
+    function resetToTextbook() {
+      stopAutoPlay();
+      baseWords = [...TEXTBOOK_WORDS];
+      setNoise(false);
+      currentStepIndex = 0;
+      playStepWithSpeech();
+    }
+
+    function randomizeData() {
+      stopAutoPlay();
+      const rand16 = () => Math.floor(Math.random() * 0xFFFF);
+      baseWords = [rand16(), 0x0000, rand16(), rand16(), rand16(), rand16()];
+      currentStepIndex = 0;
+      playStepWithSpeech();
+    }
+
+    // 視窗載入初始化（預載語音清單並渲染第一步）
+    window.onload = function () {
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.getVoices();
+        window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+      }
+      renderAll();
+    };
+  </script>
+</body>
+</html>
